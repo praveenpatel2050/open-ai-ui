@@ -1,65 +1,183 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useState, useRef, useEffect } from "react";
+
+interface Message {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export default function ChatPage() {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputText, setInputText] = useState("");
+  const [threadId, setThreadId] = useState<string | null>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // Scroll to bottom on new messages
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const appendMessage = (role: "user" | "assistant", content: string) => {
+    setMessages((prev) => [...prev, { role, content }]);
+  };
+
+  const sendMessage = async () => {
+    if (!inputText.trim()) return;
+
+    // 1. Add user message
+    appendMessage("user", inputText);
+
+    // 2. Add empty assistant message for streaming
+    appendMessage("assistant", "");
+
+    const payload = {
+      user_id: "sdf",
+      mode: "coaching",
+      text: inputText,
+      thread_id: threadId,
+    };
+
+    setInputText(""); // clear input
+
+    try {
+      const response = await fetch("http://localhost:8000/api/chat/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.body) throw new Error("No response body");
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        chunk.split("\n").forEach((line) => {
+          if (line.startsWith("data: ")) {
+            const dataStr = line.replace(/^data: /, "").trim();
+            if (!dataStr || dataStr === "[DONE]") return;
+
+            // Only parse JSON lines
+            if (dataStr.startsWith("{")) {
+              try {
+                const dataObj = JSON.parse(dataStr);
+
+                if (dataObj.type === "chunk") {
+                  setMessages((prev) => {
+                    const lastMsg = prev[prev.length - 1];
+                    if (lastMsg?.role === "assistant") {
+                      return [...prev.slice(0, -1), { role: "assistant", content: lastMsg.content + dataObj.value }];
+                    } else {
+                      return [...prev, { role: "assistant", content: dataObj.value }];
+                    }
+                  });
+                }
+                  if (dataObj.thread_id) setThreadId(dataObj.thread_id);
+
+                } catch (err) {
+                  console.error("JSON parse error:", err, dataStr);
+                }
+              }
+              }
+          });
+      }
+    } catch (err) {
+      console.error("Streaming error:", err);
+      appendMessage("assistant", "Error: " + (err as Error).message);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  };
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <div
+      style={{
+        maxWidth: 700,
+        margin: "20px auto",
+        fontFamily: "Arial, sans-serif",
+        display: "flex",
+        flexDirection: "column",
+        height: "80vh",
+      }}
+    >
+      <h1 style={{ textAlign: "center" }}>Coaching Chat</h1>
+
+      <div
+        style={{
+          flex: 1,
+          border: "1px solid #ccc",
+          borderRadius: 8,
+          padding: 10,
+          overflowY: "auto",
+          background: "#f9f9f9",
+        }}
+      >
+        {messages.map((msg, idx) => (
+          <div
+            key={idx}
+            style={{
+              margin: "5px 0",
+              textAlign: msg.role === "user" ? "right" : "left",
+            }}
+          >
+            <div
+              style={{
+                display: "inline-block",
+                padding: "8px 12px",
+                borderRadius: 16,
+                background: msg.role === "user" ? "#007bff" : "#e5e5ea",
+                color: msg.role === "user" ? "white" : "black",
+                maxWidth: "70%",
+                wordBreak: "break-word",
+              }}
+            >
+              {msg.content}
+            </div>
+          </div>
+        ))}
+        <div ref={chatEndRef}></div>
+      </div>
+
+      <div style={{ display: "flex", marginTop: 10 }}>
+        <textarea
+          value={inputText}
+          onChange={(e) => setInputText(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Type your message..."
+          rows={2}
+          style={{
+            flex: 1,
+            padding: 10,
+            borderRadius: 8,
+            border: "1px solid #ccc",
+            resize: "none",
+          }}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+        <button
+          onClick={sendMessage}
+          style={{
+            marginLeft: 5,
+            padding: "0 20px",
+            borderRadius: 8,
+            border: "none",
+            background: "#007bff",
+            color: "white",
+            cursor: "pointer",
+          }}
+        >
+          Send
+        </button>
+      </div>
     </div>
   );
 }
